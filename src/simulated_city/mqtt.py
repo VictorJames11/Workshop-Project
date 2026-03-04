@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import ssl
 from typing import TYPE_CHECKING
 import threading
+import time
+
+import certifi
 
 from .config import MqttConfig
 
@@ -35,7 +39,7 @@ class MqttConnector:
             self.client.username_pw_set(cfg.username, password=cfg.password)
 
         if cfg.tls:
-            context = ssl.create_default_context()
+            context = ssl.create_default_context(cafile=certifi.where())
             self.client.tls_set_context(context)
 
         self.client.on_connect = self._on_connect
@@ -49,7 +53,13 @@ class MqttConnector:
             logger.error(f"Failed to connect to MQTT broker, return code {rc}")
 
     def _on_disconnect(self, client, userdata, flags, reason, properties):
-        logger.warning(f"Disconnected from MQTT broker (reason={reason}). Reconnecting...")
+        reason_text = str(reason)
+        reason_code = getattr(reason, "value", None)
+        is_normal = reason_code == 0 or reason_text == "Normal disconnection"
+        if is_normal:
+            logger.info(f"Disconnected from MQTT broker (reason={reason}).")
+        else:
+            logger.warning(f"Disconnected from MQTT broker (reason={reason}). Reconnecting...")
         self.connected.clear()
 
     def connect(self):
@@ -96,3 +106,88 @@ def _make_client_id(prefix: str, suffix: str | None) -> str:
     if suffix:
         return f"{safe_prefix}-{suffix}"
     return safe_prefix
+
+
+def connect_mqtt(cfg: MqttConfig, *, client_id_suffix: str | None = None, timeout_s: float = 10.0):
+    """Connect to MQTT and return the connected paho client.
+
+    The returned client stores the underlying connector on
+    `client._simulated_city_connector` so notebooks can disconnect cleanly.
+    """
+
+    max_attempts = 3
+    connector = MqttConnector(cfg, client_id_suffix=client_id_suffix)
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            connector.connect()
+            if connector.wait_for_connection(timeout=timeout_s):
+                break
+            raise TimeoutError(f"Could not connect to MQTT broker at {cfg.host}:{cfg.port}")
+        except Exception as exc:
+            last_error = exc
+            if hasattr(connector, "disconnect"):
+                try:
+                    connector.disconnect()
+                except Exception:
+                    pass
+            if attempt < max_attempts:
+                time.sleep(0.25 * attempt)
+                connector = MqttConnector(cfg, client_id_suffix=client_id_suffix)
+                continue
+            raise last_error
+
+    client = connector.client
+    setattr(client, "_simulated_city_connector", connector)
+    return client
+
+
+def publish_json_checked(
+    client,
+    topic: str,
+    data: dict,
+    *,
+    qos: int = 1,
+    retain: bool = False,
+    timeout_s: float = 3.0,
+) -> bool:
+    """Publish JSON and verify delivery by subscribing and observing the payload."""
+
+    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    observed = threading.Event()
+
+    def _matches_payload(message_payload: bytes) -> bool:
+        return message_payload.decode("utf-8") == payload
+
+    callback_name = f"_simcity_verify_{int(time.time() * 1_000_000)}"
+
+    def _on_topic_message(_client, _userdata, msg):
+        if _matches_payload(msg.payload):
+            observed.set()
+
+    supports_callbacks = all(
+        hasattr(client, attr)
+        for attr in ("message_callback_add", "message_callback_remove", "subscribe", "unsubscribe")
+    )
+
+    if supports_callbacks:
+        client.message_callback_add(topic, _on_topic_message)
+        client.subscribe(topic, qos=qos)
+
+    publish_result = client.publish(topic, payload=payload, qos=qos, retain=retain)
+    if hasattr(publish_result, "wait_for_publish"):
+        publish_result.wait_for_publish()
+
+    if supports_callbacks:
+        is_verified = observed.wait(timeout=timeout_s)
+        client.message_callback_remove(topic)
+        client.unsubscribe(topic)
+        if not is_verified:
+            raise RuntimeError(f"Publish verification timed out for topic '{topic}'")
+        return True
+
+    result_code = getattr(publish_result, "rc", 0)
+    if result_code != 0:
+        raise RuntimeError(f"Publish failed for topic '{topic}' with rc={result_code}")
+    return True

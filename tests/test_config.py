@@ -1,3 +1,5 @@
+from textwrap import dedent
+
 from simulated_city.config import load_config
 
 
@@ -125,3 +127,109 @@ def test_load_config_single_broker_with_active_profiles(tmp_path) -> None:
     # Only local broker in configs
     assert "local" in cfg.mqtt_configs
     assert len(cfg.mqtt_configs) == 1
+
+
+def test_load_config_parses_phase2_car_rerouting_settings(tmp_path) -> None:
+    """Test explicit Phase 2 config fields for tick/roadwork/routing."""
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        dedent(
+            """
+        mqtt:
+          active_profiles: [local]
+          profiles:
+            local:
+              host: localhost
+              port: 1883
+              tls: false
+        simulation:
+          car_rerouting_phase1:
+            seed: 11
+            tick_seconds: 0.5
+            max_ticks: 700
+            car_count: 30
+            blocked_segment_ids: [44105317]
+            roadwork:
+              start_tick: 180
+              end_tick: 300
+              blocked_segment_ids: [44105317, 733901267]
+            routing:
+              reroute_cooldown_ticks: 4
+              base_edge_cost: 1.25
+              congestion_penalty: 2.5
+              tie_breaker: hops
+            segment_node_pairs:
+              "44105317": [N2, N3]
+              "733901267": [N4, N5]
+            graph_adjacency:
+              N1: [N2]
+              N2: [N1, N3]
+              N3: [N2]
+            od_pairs:
+              - origin: N1
+                destination: N3
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(p)
+    assert cfg.simulation is not None
+    phase1 = cfg.simulation.car_rerouting_phase1
+    assert phase1 is not None
+
+    assert phase1.seed == 11
+    assert phase1.tick_seconds == 0.5
+    assert phase1.max_ticks == 700
+    assert phase1.car_count == 30
+    assert phase1.roadwork.start_tick == 180
+    assert phase1.roadwork.end_tick == 300
+    assert phase1.roadwork.blocked_segment_ids == (44105317, 733901267)
+    assert phase1.routing.reroute_cooldown_ticks == 4
+    assert phase1.routing.base_edge_cost == 1.25
+    assert phase1.routing.congestion_penalty == 2.5
+    assert phase1.routing.tie_breaker == "hops"
+
+
+def test_load_config_phase2_defaults_for_roadwork_and_routing(tmp_path) -> None:
+    """Test Phase 2 defaults are applied when roadwork/routing are omitted."""
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        dedent(
+            """
+        mqtt:
+          active_profiles: [local]
+          profiles:
+            local:
+              host: localhost
+              port: 1883
+              tls: false
+        simulation:
+          car_rerouting_phase1:
+            segment_node_pairs:
+              "44105317": [N2, N3]
+            graph_adjacency:
+              N1: [N2]
+              N2: [N1]
+            od_pairs:
+              - origin: N1
+                destination: N2
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(p)
+    assert cfg.simulation is not None
+    phase1 = cfg.simulation.car_rerouting_phase1
+    assert phase1 is not None
+
+    assert phase1.tick_seconds == 1.0
+    assert phase1.max_ticks == 600
+    assert phase1.roadwork.start_tick == 180
+    assert phase1.roadwork.end_tick == 300
+    assert phase1.roadwork.blocked_segment_ids == (44105317, 733901267)
+    assert phase1.routing.reroute_cooldown_ticks == 3
+    assert phase1.routing.base_edge_cost == 1.0
+    assert phase1.routing.congestion_penalty == 2.0
+    assert phase1.routing.tie_breaker == "node_id"

@@ -227,3 +227,57 @@ if _MapLibreMap is not None:  # pragma: no cover
 				except Exception:
 					# Never let UI updates crash a simulation loop.
 					pass
+
+
+DEFAULT_NODE_COORDINATES: Dict[str, Tuple[float, float]] = {
+	"N1": (12.5580, 55.6720),
+	"N2": (12.5685, 55.6758),
+	"N3": (12.5802, 55.6778),
+	"N4": (12.5600, 55.6812),
+	"N5": (12.5715, 55.6828),
+	"N6": (12.5830, 55.6848),
+}
+
+
+def resolve_node_lnglat(
+	node_id: str,
+	*,
+	node_coordinates: Optional[Dict[str, Tuple[float, float]]] = None,
+) -> Tuple[float, float]:
+	"""Return map coordinates for a node id used in simulation payloads."""
+
+	coordinates = node_coordinates or DEFAULT_NODE_COORDINATES
+	if node_id not in coordinates:
+		raise KeyError(f"Unknown node id '{node_id}'")
+	return coordinates[node_id]
+
+
+def resolve_segment_lnglat(
+	segment_id: int,
+	*,
+	segment_node_pairs: Dict[int, Tuple[str, str]],
+	node_coordinates: Optional[Dict[str, Tuple[float, float]]] = None,
+) -> Tuple[float, float]:
+	"""Return midpoint coordinates for a road segment id."""
+
+	if segment_id not in segment_node_pairs:
+		raise KeyError(f"Unknown segment id '{segment_id}'")
+
+	from_node, to_node = segment_node_pairs[segment_id]
+	from_lng, from_lat = resolve_node_lnglat(from_node, node_coordinates=node_coordinates)
+	to_lng, to_lat = resolve_node_lnglat(to_node, node_coordinates=node_coordinates)
+	return ((from_lng + to_lng) / 2.0, (from_lat + to_lat) / 2.0)
+
+
+def car_popup_text(car_event: Dict[str, object]) -> str:
+	"""Build a compact popup string for car telemetry markers."""
+
+	car_id = str(car_event.get("car_id", "unknown"))
+	status = str(car_event.get("status", "unknown"))
+	origin = str(car_event.get("origin", "?"))
+	destination = str(car_event.get("destination", "?"))
+	tick = car_event.get("tick", "?")
+	return (
+		f"car={car_id} | status={status} | "
+		f"od={origin}->{destination} | tick={tick}"
+	)

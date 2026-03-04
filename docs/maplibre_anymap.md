@@ -13,6 +13,40 @@ It is intentionally not a full anymap-ts manual — it focuses on the functions 
 python -m pip install -e ".[notebooks]"
 ```
 
+## Phase 5 dashboard pattern
+
+For this workshop phase, the dashboard notebook subscribes to these topics:
+
+- `simulated-city/city/roadwork/events`
+- `simulated-city/city/cars/telemetry`
+- `simulated-city/city/cars/reroute`
+- `simulated-city/city/traffic/congestion`
+
+Read-only rendering rules:
+
+- Use `anymap-ts` `Map` only.
+- Car markers are blue (`#3388ff`) from `current_lng`/`current_lat` when present (fallback to `current_node`).
+- Roadwork blocked segments are red (`#d32f2f`) markers at segment midpoints.
+- Congested segments are orange (`#ff9800`) markers at segment midpoints.
+
+Minimal dashboard setup example:
+
+```python
+from anymap_ts import Map
+
+dashboard_map = Map(center=(12.5683, 55.6761), zoom=13.4, height="640px")
+dashboard_map.add_basemap("OpenStreetMap.Mapnik")
+dashboard_map
+```
+
+The project helper module `simulated_city.maplibre_live` provides:
+
+- `resolve_node_lnglat(node_id)`
+- `resolve_segment_lnglat(segment_id, segment_node_pairs=...)`
+- `car_popup_text(event)`
+
+These helpers keep marker placement and popup formatting deterministic across runs.
+
 
 ## Coordinates
 

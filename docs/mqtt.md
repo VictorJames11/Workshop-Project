@@ -6,6 +6,8 @@ This document covers everything in `simulated_city.mqtt`:
 
 - `MqttConnector`
 - `MqttPublisher`
+- `connect_mqtt()`
+- `publish_json_checked()`
 
 ## Quick Start: Using Multiple Brokers
 
@@ -77,25 +79,21 @@ HIVEMQ_PASSWORD=your_password
 ```python
 import time
 from simulated_city.config import load_config
-from simulated_city.mqtt import MqttConnector, MqttPublisher
+from simulated_city.mqtt import connect_mqtt, publish_json_checked
 
-cfg = load_config().mqtt
+cfg = load_config()
 
-# Create a connector and connect
-connector = MqttConnector(cfg, client_id_suffix="demo")
-connector.connect()
-
-# Wait for connection
-if not connector.wait_for_connection():
-    raise RuntimeError("Failed to connect to MQTT broker")
-
-# Create a publisher and send a message
-publisher = MqttPublisher(connector)
-publisher.publish_json("simulated-city/metrics", '{"step": 1, "agents": 25}')
+client = connect_mqtt(cfg.mqtt, client_id_suffix="demo")
+publish_json_checked(
+  client,
+  f"{cfg.mqtt.base_topic}/city/cars/telemetry",
+  {"tick": 1, "car_id": "car-01", "status": "arrived"},
+)
 
 # Disconnect when done
-time.sleep(1) # Give time for message to be sent
-connector.disconnect()
+time.sleep(1)
+client.loop_stop()
+client.disconnect()
 ```
 
 Notes:
@@ -103,6 +101,46 @@ Notes:
 - `MqttConnector` handles the connection and automatic reconnection.
 - You must call `connect()` to start the connection process.
 - The network loop runs in a background thread.
+
+## Phase 3 publishing contract
+
+The car agent publishes to:
+
+- `simulated-city/city/cars/telemetry`
+- `simulated-city/city/cars/reroute`
+
+If your `base_topic` differs in `config.yaml`, the same suffixes are used under that base.
+
+Telemetry payload shape:
+
+```json
+{
+  "agent": "agent_cars",
+  "tick": 1,
+  "timestamp": "2026-01-01T00:00:01+00:00",
+  "car_id": "car-01",
+  "origin": "N1",
+  "destination": "N6",
+  "current_node": "N4",
+  "status": "arrived"
+}
+```
+
+Reroute payload shape:
+
+```json
+{
+  "agent": "agent_cars",
+  "tick": 1,
+  "timestamp": "2026-01-01T00:00:01+00:00",
+  "car_id": "car-01",
+  "origin": "N1",
+  "destination": "N6",
+  "old_route": ["N1", "N2", "N3", "N6"],
+  "new_route": ["N1", "N4", "N5", "N6"],
+  "blocked_segment_ids": [44105317, 733901267]
+}
+```
 
 ## Monitoring Messages with mosquitto_sub
 
@@ -190,6 +228,16 @@ Example:
 publisher = MqttPublisher(connector)
 publisher.publish_json("my/topic", '{"data": 123}')
 ```
+
+## Functions
+
+### `connect_mqtt(cfg, client_id_suffix=None, timeout_s=10.0)`
+
+Connects to the broker and returns a connected paho client.
+
+### `publish_json_checked(client, topic, data, qos=1, retain=False, timeout_s=3.0)`
+
+Publishes a JSON object and verifies delivery by subscribing to the same topic and waiting for the payload.
 
 ## Switching Between Single and Multiple Brokers
 

@@ -195,3 +195,24 @@ while True:
 
 **Mistake:** Installing packages inside notebooks with `!pip install`  
 **Fix:** Add to `pyproject.toml` and reinstall with `pip install -e ".[notebooks]"`
+
+## Phase 4 Run Sequence (Cars + Roadwork + Monitor)
+
+Use this sequence for the workshop rerouting scenario:
+
+1. Start local broker (Mosquitto) and keep it running.
+2. Open `notebooks/agent_roadwork.ipynb` and run cells 1-3.
+    - This publishes scheduled closures to `simulated-city/city/roadwork/events`.
+3. Open `notebooks/agent_cars.ipynb` and run cells 1-4.
+    - This subscribes to roadwork/congestion and publishes telemetry/reroute events.
+4. Open `notebooks/agent_monitor.ipynb` and run cells 1-3.
+    - This subscribes to telemetry/roadwork, computes congestion, and publishes to `simulated-city/city/traffic/congestion`.
+5. Re-run cell 4 in `agent_cars.ipynb` to apply latest congestion updates with reroute cooldown behavior.
+
+Expected topics in this phase:
+
+- Published by roadwork: `simulated-city/city/roadwork/events`
+- Published by cars: `simulated-city/city/cars/telemetry`, `simulated-city/city/cars/reroute`
+- Published by monitor: `simulated-city/city/traffic/congestion`
+- Subscribed by cars: `simulated-city/city/roadwork/events`, `simulated-city/city/traffic/congestion`
+- Subscribed by monitor: `simulated-city/city/cars/telemetry`, `simulated-city/city/roadwork/events`

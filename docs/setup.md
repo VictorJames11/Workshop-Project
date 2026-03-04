@@ -1,184 +1,123 @@
 # Setup
 
-This project targets **Python 3.11+**.
+This workshop targets Python `>=3.11`.
 
-In practice, the smoothest experience is usually with Python **3.11–3.13**. Newer versions (for example Python 3.14 right after release) may work, but some third-party packages may not have prebuilt wheels available yet, which can cause installs (for example `python -m pip install ...`) to fail.
+## 1) Create and activate virtual environment
 
-The package metadata enforces this (`requires-python >= 3.11`), so installs will fail on older Python versions.
-
-## Create and activate a virtual environment
-
-If you have multiple Python versions installed, you may accidentally create the virtual environment with an older interpreter (for example Python 3.9/3.10). The interpreter you use to run `-m venv` is the Python version that will be used inside `.venv`.
-
-### All platforms (recommended)
-
-Use the Python helper script. It finds all Python versions on your system, lists them, and prompts you to choose one.
+macOS/Linux:
 
 ```bash
 python3 scripts/create_venv.py
-```
-
-### Manual setup ( after the script )
-
-macOS / Linux:
-
-```bash
 source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev, geo, notebooks]"
+python -m pip install -U pip setuptools wheel
+python -m pip install -e ".[dev,notebooks]"
+
+# If GDAL/raster dependencies fail, use the no-GDAL notebook install:
+python -m pip install -e ".[dev]"
+python -m pip install "jupyterlab>=4" "ipykernel>=6" "anymap-ts"
 ```
 
-Windows (PowerShell):
+Windows PowerShell:
 
 ```powershell
+python scripts/create_venv.py
 .\.venv\Scripts\Activate.ps1
-python -m pip install -U pip
-python -m pip install -e ".[dev, geo, notebooks]"
+python -m pip install -U pip setuptools wheel
+python -m pip install -e ".[dev,notebooks]"
+
+# If GDAL/raster dependencies fail, use the no-GDAL notebook install:
+python -m pip install -e ".[dev]"
+python -m pip install "jupyterlab>=4" "ipykernel>=6" "anymap-ts"
 ```
 
-### when returning to the project
-
-If VS- code does not automaticly open the .venv in the terminal thye
-
-macOS / Linux:
-
-```bash
-source .venv/bin/activate
-
-```
-
-Windows (PowerShell):
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-If the script does not list a Python version that is >= 3.11, install it first:
-
-- macOS (Homebrew):
-
-```bash
-brew install python@3.12
-```
-
-- Windows: download and run the installer from [https://www.python.org/downloads/](https://www.python.org/downloads/)
-
-If you already created `.venv` with the wrong Python version, delete `.venv` and create it again with the correct interpreter.
-
-### Verify your installation
-
-After installing, verify that all packages are correct:
+## 2) Verify environment
 
 ```bash
 python scripts/verify_setup.py
+python scripts/validate_structure.py
+python -m pytest
 ```
 
-This checks that you have:
+## 3) Start local MQTT broker (recommended)
 
-- Required packages (paho-mqtt, PyYAML, python-dotenv)
-- Notebook tools (`jupyterlab`, `anymap-ts`)
-- No conflicting packages (e.g., `folium`)
-
-If the check fails, run the install command above again.
-
-## Optional: geospatial transforms (CRS)
-
-If you plan to work with real-world coordinates, install the optional geospatial
-extra to enable EPSG transforms.
-
-Geo helpers live in `simulated_city.geo` and include convenience functions like
-`wgs2utm(...)` / `utm2wgs(...)` plus the general `transform_xy(...)`.
-
-```bash
-python -m pip install -e ".[geo]"
-```
-
-Tip: for notebooks that include both mapping + CRS transforms, you can install both extras:
-
-```bash
-python -m pip install -e ".[notebooks,geo]"
-```
-
-## Set up a local MQTT broker (optional)
-
-If you want to test MQTT locally before connecting to a public broker, install **Mosquitto**:
-
-### macOS (using Homebrew)
+macOS (Homebrew):
 
 ```bash
 brew install mosquitto
 brew services start mosquitto
-```
-
-Verify it's running:
-
-```bash
 lsof -i :1883
 ```
 
-You should see `mosquitto` listening on port 1883.
+Use local profile in `config.yaml` for reproducible workshop runs.
 
-### Linux (Ubuntu/Debian)
-
-```bash
-sudo apt-get install mosquitto
-sudo systemctl start mosquitto
-```
-
-### Windows
-
-Download the installer from [mosquitto.org](https://mosquitto.org/download/) or use Windows Subsystem for Linux (WSL).
-
-## Troubleshooting
-
-### I installed `folium` or another mapping library
-
-Remove it immediately:
+If Homebrew Mosquitto is not available on your macOS version, run a minimal Docker broker instead:
 
 ```bash
-python -m pip uninstall folium folium-map
+docker run -d --name simcity-mosquitto -p 1883:1883 eclipse-mosquitto:2
+docker ps --filter name=simcity-mosquitto
 ```
 
-The workshop uses **`anymap-ts`** as the mapping tool. It integrates better with real-time MQTT data streams and geospatial transforms. Other tools (like `folium`, `matplotlib`, `plotly`) are not compatible with this workshop's structure.
+Stop and remove when done:
 
-### I see "ModuleNotFoundError: No module named 'anymap_ts'"
+```bash
+docker stop simcity-mosquitto
+docker rm simcity-mosquitto
+```
 
-Run the verification script:
+Minimum needed for this Docker fallback:
+- A working Docker runtime (`docker` CLI command available)
+- CPU virtualization support enabled
+- At least 2 CPU cores and 4 GB RAM (8 GB recommended)
+- About 2 GB free disk space
+- In `config.yaml`, use `active_profiles: [local]` with host `127.0.0.1`, port `1883`, and `tls: false`
+
+If Docker Desktop is unsupported on an older macOS release, use Docker CLI with Colima:
+
+```bash
+brew install docker colima
+colima start --cpu 2 --memory 4 --disk 20
+docker run -d --name simcity-mosquitto -p 1883:1883 eclipse-mosquitto:2
+```
+
+## 4) Recommended notebook startup order (Phase 6 runbook)
+
+For stable distributed behavior, start notebooks in this order:
+
+1. `notebooks/agent_roadwork.ipynb` (run publish cell)
+2. `notebooks/agent_monitor.ipynb` (run subscribe cell, then process cell)
+3. `notebooks/agent_cars.ipynb` (run connect/build/publish cells)
+4. `notebooks/dashboard.ipynb` (run connect/map/subscribe cells)
+
+Then iterate:
+- run cars publish cell
+- run monitor process cell
+- observe dashboard update
+
+This order reduces startup races and makes messages visible immediately.
+
+## 5) Quick troubleshooting
+
+- `TimeoutError` on MQTT connect:
+  - confirm broker is running at `127.0.0.1:1883`
+  - confirm active profile is local in `config.yaml`
+- Publish verification timeout:
+  - rerun the notebook cell after broker is stable
+  - avoid disconnecting before publish completes
+- Missing dashboard updates:
+  - rerun dashboard subscribe cell after other agents are connected
+
+## 6) Optional install fallback (new Python versions)
+
+If geospatial extras fail to build on very new Python versions:
+
+```bash
+python -m pip install -U pip setuptools wheel
+python -m pip install -e ".[dev]"
+python -m pip install "jupyterlab>=4" "ipykernel>=6" "anymap-ts"
+```
+
+Then run:
 
 ```bash
 python scripts/verify_setup.py
-```
-
-Then reinstall with the correct extras:
-
-```bash
-python -m pip install -e ".[notebooks]"
-```
-
-### Notebooks are in one big file instead of communicating via MQTT
-
-This is a common mistake. You should structure notebooks as independent agents that publish/subscribe via MQTT:
-
-- `notebooks/agent_transport.ipynb` — simulates transport, publishes traffic data
-- `notebooks/agent_environment.ipynb` — simulates air quality, subscribes to traffic data
-- `notebooks/dashboard.ipynb` — subscribes to all agent topics, visualizes with `anymap-ts`
-
-See [exercises.md](exercises.md) for examples.
-
-## Run tests
-
-Run tests to verify the libraries are installed, especially MQTT broker support. The MQTT tests validate all configured MQTT profiles (see `config.yaml`) and confirm the MQTT password is set in `.env`.
-
-```bash
-python -m pytest
-```
-
-## Run notebooks
-
-By default, run notebooks in VS Code: open a notebook in `notebooks/` and select the `.venv` kernel.
-
-You can also run notebooks in a browser by starting JupyterLab:
-
-```bash
-python -m jupyterlab
 ```

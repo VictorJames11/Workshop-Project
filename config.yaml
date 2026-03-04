@@ -14,7 +14,7 @@ mqtt:
   # 
 
   # The first profile in the list is the primary (default) broker.
-  active_profiles: [local, hivemq_cloud]
+  active_profiles: [local]
 
   # Broker profiles.
   # Profile values override any common mqtt.* settings below.
@@ -34,10 +34,12 @@ mqtt:
 
     # Existing default (HiveMQ Cloud-style).
     # Replace host with your cluster host, e.g. "xxxxxx.s1.eu.hivemq.cloud".
+    #       host: "95c141b4004f40d2a4b14eeb0b3015ac.s1.eu.hivemq.cloud"
+
     hivemq_cloud:
-      host: "c451c402b7fb41b399936cd5727a1d3f.s1.eu.hivemq.cloud"
+      host: "95c141b4004f40d2a4b14eeb0b3015ac.s1.eu.hivemq.cloud"
       port: 8883
-      tls: true
+      tls: false
       username_env: "HIVEMQ_USERNAME"
       password_env: "HIVEMQ_PASSWORD"
 
@@ -67,3 +69,37 @@ mqtt:
 #   # All available brokers by name:
 #   print(config.mqtt_configs["local"].host)
 #   print(config.mqtt_configs["mqtthq"].host)
+
+simulation:
+  car_rerouting_phase1:
+    seed: 7
+    tick_seconds: 1.0
+    max_ticks: 600
+    car_count: 10
+    blocked_segment_ids: [44105317]
+    roadwork:
+      start_tick: 180
+      end_tick: 300
+      blocked_segment_ids: [44105317, 733901267]
+    routing:
+      reroute_cooldown_ticks: 3
+      base_edge_cost: 1.0
+      congestion_penalty: 2.0
+      tie_breaker: "node_id"
+    segment_node_pairs:
+      "44105317": [N2, N3]
+      "733901267": [N4, N5]
+    graph_adjacency:
+      N1: [N2, N4]
+      N2: [N1, N3, N5]
+      N3: [N2, N6]
+      N4: [N1, N5]
+      N5: [N4, N2, N6]
+      N6: [N3, N5]
+    od_pairs:
+      - origin: N1
+        destination: N6
+      - origin: N2
+        destination: N6
+      - origin: N4
+        destination: N3

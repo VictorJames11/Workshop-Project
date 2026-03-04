@@ -37,6 +37,41 @@ class SimulationLocationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CarReroutingOdPair:
+    origin: str
+    destination: str
+
+
+@dataclass(frozen=True, slots=True)
+class CarReroutingRoadworkConfig:
+    start_tick: int = 180
+    end_tick: int = 300
+    blocked_segment_ids: tuple[int, ...] = (44105317, 733901267)
+
+
+@dataclass(frozen=True, slots=True)
+class CarReroutingRoutingConfig:
+    reroute_cooldown_ticks: int = 3
+    base_edge_cost: float = 1.0
+    congestion_penalty: float = 2.0
+    tie_breaker: str = "node_id"
+
+
+@dataclass(frozen=True, slots=True)
+class CarReroutingPhase1Config:
+    seed: int = 7
+    tick_seconds: float = 1.0
+    max_ticks: int = 600
+    car_count: int = 20
+    blocked_segment_ids: tuple[int, ...] = ()
+    roadwork: CarReroutingRoadworkConfig = field(default_factory=CarReroutingRoadworkConfig)
+    routing: CarReroutingRoutingConfig = field(default_factory=CarReroutingRoutingConfig)
+    segment_node_pairs: dict[int, tuple[str, str]] = field(default_factory=dict)
+    graph_adjacency: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    od_pairs: tuple[CarReroutingOdPair, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationConfig:
     """Configuration for the rubbish-bin simulation.
 
@@ -59,6 +94,7 @@ class SimulationConfig:
     start_time: datetime | None = None
     seed: int | None = None
     locations: tuple[SimulationLocationConfig, ...] = ()
+    car_rerouting_phase1: CarReroutingPhase1Config | None = None
 
 
 def _parse_utc_datetime(value: Any) -> datetime:
@@ -327,6 +363,8 @@ def _parse_simulation_config(raw: Any) -> SimulationConfig | None:
 
         locations.append(SimulationLocationConfig(location_id=location_id, lat=lat, lon=lon))
 
+    car_rerouting_phase1 = _parse_car_rerouting_phase1(raw.get("car_rerouting_phase1"))
+
     return SimulationConfig(
         timestep_minutes=timestep_minutes,
         arrival_prob=arrival_prob,
@@ -337,6 +375,103 @@ def _parse_simulation_config(raw: Any) -> SimulationConfig | None:
         start_time=start_time,
         seed=seed,
         locations=tuple(locations),
+        car_rerouting_phase1=car_rerouting_phase1,
+    )
+
+
+def _parse_car_rerouting_phase1(raw: Any) -> CarReroutingPhase1Config | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1' must be a mapping")
+
+    seed = int(raw.get("seed") or 7)
+    tick_seconds = float(raw.get("tick_seconds") or 1.0)
+    max_ticks = int(raw.get("max_ticks") or 600)
+    car_count = int(raw.get("car_count") or 20)
+
+    blocked_raw = raw.get("blocked_segment_ids")
+    if blocked_raw is None:
+        blocked_raw = []
+    if not isinstance(blocked_raw, list):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.blocked_segment_ids' must be a list")
+    blocked_segment_ids = tuple(int(item) for item in blocked_raw)
+
+    roadwork_raw = raw.get("roadwork") or {}
+    if not isinstance(roadwork_raw, dict):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.roadwork' must be a mapping")
+
+    roadwork_start_tick = int(roadwork_raw.get("start_tick") or 180)
+    roadwork_end_tick = int(roadwork_raw.get("end_tick") or 300)
+
+    roadwork_blocked_raw = roadwork_raw.get("blocked_segment_ids")
+    if roadwork_blocked_raw is None:
+        roadwork_blocked_raw = blocked_raw or [44105317, 733901267]
+    if not isinstance(roadwork_blocked_raw, list):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.roadwork.blocked_segment_ids' must be a list")
+
+    roadwork = CarReroutingRoadworkConfig(
+        start_tick=roadwork_start_tick,
+        end_tick=roadwork_end_tick,
+        blocked_segment_ids=tuple(int(item) for item in roadwork_blocked_raw),
+    )
+
+    routing_raw = raw.get("routing") or {}
+    if not isinstance(routing_raw, dict):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.routing' must be a mapping")
+
+    routing = CarReroutingRoutingConfig(
+        reroute_cooldown_ticks=int(routing_raw.get("reroute_cooldown_ticks") or 3),
+        base_edge_cost=float(routing_raw.get("base_edge_cost") or 1.0),
+        congestion_penalty=float(routing_raw.get("congestion_penalty") or 2.0),
+        tie_breaker=str(routing_raw.get("tie_breaker") or "node_id"),
+    )
+
+    segment_pairs_raw = raw.get("segment_node_pairs") or {}
+    if not isinstance(segment_pairs_raw, dict):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.segment_node_pairs' must be a mapping")
+
+    segment_node_pairs: dict[int, tuple[str, str]] = {}
+    for segment_id, pair in segment_pairs_raw.items():
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError("Each segment_node_pairs value must be a 2-item list [from_node, to_node]")
+        segment_node_pairs[int(segment_id)] = (str(pair[0]), str(pair[1]))
+
+    graph_raw = raw.get("graph_adjacency") or {}
+    if not isinstance(graph_raw, dict):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.graph_adjacency' must be a mapping")
+
+    graph_adjacency: dict[str, tuple[str, ...]] = {}
+    for node, neighbors in graph_raw.items():
+        if not isinstance(neighbors, list):
+            raise ValueError("Each graph_adjacency value must be a list of node ids")
+        graph_adjacency[str(node)] = tuple(str(neighbor) for neighbor in neighbors)
+
+    od_pairs_raw = raw.get("od_pairs") or []
+    if not isinstance(od_pairs_raw, list):
+        raise ValueError("Config key 'simulation.car_rerouting_phase1.od_pairs' must be a list")
+
+    od_pairs: list[CarReroutingOdPair] = []
+    for index, item in enumerate(od_pairs_raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Each od_pairs item must be a mapping (item {index})")
+        origin = str(item.get("origin") or "").strip()
+        destination = str(item.get("destination") or "").strip()
+        if not origin or not destination:
+            raise ValueError(f"Each od_pairs item must define origin and destination (item {index})")
+        od_pairs.append(CarReroutingOdPair(origin=origin, destination=destination))
+
+    return CarReroutingPhase1Config(
+        seed=seed,
+        tick_seconds=tick_seconds,
+        max_ticks=max_ticks,
+        car_count=car_count,
+        blocked_segment_ids=blocked_segment_ids,
+        roadwork=roadwork,
+        routing=routing,
+        segment_node_pairs=segment_node_pairs,
+        graph_adjacency=graph_adjacency,
+        od_pairs=tuple(od_pairs),
     )
 
 
